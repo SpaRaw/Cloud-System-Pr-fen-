@@ -1,10 +1,26 @@
-# Lokale Umgebung.
-#   Altsystem:            docker compose --profile legacy up -d --build
-#   Zielsystem emuliert:  docker compose --profile ziel up -d   (MySQL, Redis, Azurite, Mailpit)
+# Lokaler Stack: Altsystem und Zielsystem nebeneinander, das Zielsystem so nah wie möglich am Azure-Setup
+# (infra/main.bicep). Unterschiede stehen in docs/LOKAL.md.
+#
+#   docker compose up -d --build        alles bauen und starten
+#   http://localhost:3001               Altsystem (Admin: admin / admin)
+#   http://localhost:3000               Zielsystem (Admin: lokaler Easy-Auth-Login)
+#   http://localhost:8025               Mailpit (alle Mails beider Systeme)
+#   docker compose down -v              alles inkl. Daten löschen
+#
+# Ablauf beim ersten Start (wie die Migration nach Azure):
+#   mysql-legacy -> legacy-init (Schema 001 + Testdaten) -> migration (Dump -> mysql-ziel + 002) -> functions, shop
+
+name: klangwerk
+
+x-ressourcen-klein: &klein
+  deploy: { resources: { limits: { cpus: "0.25", memory: 512M } } }
+x-ressourcen-app: &app
+  deploy: { resources: { limits: { cpus: "${APP_CPUS:-0.5}", memory: 1G } } }
+
 services:
+  # ───────────────────────────── Altsystem: ein Server, alles auf einer Platte ─────────────────────────────
   mysql-legacy:
     image: mysql:8.4
-    profiles: [legacy]
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: klangwerk
@@ -13,15 +29,24 @@ services:
     ports: ["3307:3306"]
     volumes: [legacy-db:/var/lib/mysql]
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      # über TCP prüfen: Beim ersten Start läuft kurz ein Init-Server ohne Netzwerk
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uklangwerk", "-pklangwerk", "-e", "SELECT 1", "klangwerk"]
       interval: 3s
-      retries: 30
+      retries: 60
+
+  legacy-init:
+    build: { context: ., dockerfile: docker/tools.Dockerfile }
+    image: klangwerk-tools
+    depends_on: { mysql-legacy: { condition: service_healthy } }
+    environment:
+      DATABASE_URL: mysql://klangwerk:klangwerk@mysql-legacy:3306/klangwerk
+    entrypoint: ["sh", "-c", "pnpm -s --filter @kw/db migrate -- --bis 001 && pnpm -s --filter @kw/db seed"]
+    restart: "no"
 
   legacy:
     build: { context: ., dockerfile: apps/legacy/Dockerfile }
-    profiles: [legacy]
-    depends_on:
-      mysql-legacy: { condition: service_healthy }
+    image: klangwerk-legacy
+    depends_on: { legacy-init: { condition: service_completed_successfully } }
     environment:
       DATABASE_URL: mysql://klangwerk:klangwerk@mysql-legacy:3306/klangwerk
       SMTP_URL: smtp://mailpit:1025
@@ -29,38 +54,106 @@ services:
       ADMIN_BASIC_AUTH: admin:admin
       LEGACY_VERZOEGERUNG_MS: "250"
     ports: ["3001:3001"]
-    volumes: [legacy-dateien:/data]   # PDFs und Bilder liegen auf derselben "Platte"
+    volumes: [legacy-dateien:/data]
+    <<: *app
 
+  # ───────────────────────────── Migration Alt -> Neu (Nachweis 2) ─────────────────────────────
+  migration:
+    image: mysql:8.4
+    depends_on:
+      legacy-init: { condition: service_completed_successfully }
+      mysql-ziel: { condition: service_healthy }
+    entrypoint: ["sh", "/migration.sh"]
+    volumes:
+      - ./docker/migration.sh:/migration.sh:ro
+      - ./packages/db/sql:/sql:ro
+    restart: "no"
+
+  # ───────────────────────────── Zielsystem (entspricht infra/main.bicep) ─────────────────────────────
+  # Azure Database for MySQL Flexible Server
   mysql-ziel:
     image: mysql:8.4
-    profiles: [ziel]
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: klangwerk
       MYSQL_USER: klangwerk
       MYSQL_PASSWORD: klangwerk
     ports: ["3308:3306"]
+    volumes: [ziel-db:/var/lib/mysql]
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      # über TCP prüfen: Beim ersten Start läuft kurz ein Init-Server ohne Netzwerk
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uklangwerk", "-pklangwerk", "-e", "SELECT 1", "klangwerk"]
       interval: 3s
-      retries: 30
+      retries: 60
 
+  # Container App redis-klangwerk: 1 Replik, Kennwort, keine Persistenz
   redis:
     image: redis:7-alpine
-    profiles: [ziel]
+    command: ["sh", "-c", 'exec redis-server --requirepass "$$REDIS_PASSWORD" --save "" --appendonly no --maxmemory 400mb']
+    environment: { REDIS_PASSWORD: lokal-redis }
     ports: ["6380:6379"]
+    <<: *klein
 
+  # Storage Account (Queue bestellungen, Blob tickets/bilder)
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite
-    profiles: [ziel]
     command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck --loose
     ports: ["10000:10000", "10001:10001", "10002:10002"]
+    volumes: [azurite:/data]
 
+  # Functions: dasselbe Image wie in Azure, in der echten Functions-Runtime
+  functions:
+    build: { context: ., dockerfile: apps/functions/Dockerfile }
+    image: klangwerk-functions
+    depends_on:
+      migration: { condition: service_completed_successfully }
+      redis: { condition: service_started }
+      azurite: { condition: service_started }
+    environment:
+      AzureFunctionsJobHost__Logging__Console__IsEnabled: "true"
+      AzureWebJobsStorage: &azurite DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;
+      BestellQueue: *azurite
+      STORAGE_CONNECTION_STRING: *azurite
+      DATABASE_URL: mysql://klangwerk:klangwerk@mysql-ziel:3306/klangwerk
+      REDIS_URL: redis://:lokal-redis@redis:6379
+      SMTP_URL: smtp://mailpit:1025
+      MAIL_ABSENDER: DoNotReply@klangwerk.azurecomm.test
+      RATE_LIMIT_IP: ${RATE_LIMIT_IP:-300}
+      NODE_ENV: production
+    ports: ["7071:80"]
+    <<: *app
+
+  # Container App shop-klangwerk
+  shop:
+    build: { context: ., dockerfile: apps/shop/Dockerfile }
+    image: klangwerk-shop
+    depends_on:
+      migration: { condition: service_completed_successfully }
+      functions: { condition: service_started }
+    environment:
+      DATABASE_URL: mysql://klangwerk:klangwerk@mysql-ziel:3306/klangwerk
+      REDIS_URL: redis://:lokal-redis@redis:6379
+      STORAGE_CONNECTION_STRING: *azurite
+      FUNCTIONS_URL: http://functions:80
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+    expose: ["3000"]
+    <<: *app
+
+  # Ingress von Container Apps + Easy Auth (Entra ID), lokal nachgebaut
+  ingress:
+    build: { context: docker/easyauth }
+    image: klangwerk-ingress
+    depends_on: [shop]
+    environment: { UPSTREAM: "http://shop:3000", PORT: "3000" }
+    ports: ["3000:3000"]
+
+  # Azure Communication Services Email -> lokal Mailpit (beide Systeme)
   mailpit:
     image: axllent/mailpit
-    profiles: [legacy, ziel]
     ports: ["8025:8025", "1025:1025"]
 
 volumes:
   legacy-db:
   legacy-dateien:
+  ziel-db:
+  azurite:

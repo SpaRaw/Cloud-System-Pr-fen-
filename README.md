@@ -20,27 +20,19 @@ scripts          Migration Altsystem -> Azure
 
 ## Lokal starten
 
-Voraussetzungen: Node 22, pnpm (`corepack enable`), Docker.
+Voraussetzung: Docker. Ein Befehl startet Altsystem und Zielsystem, das Zielsystem wie in Azure aufgebaut
+(Details, Azure-Vergleich und Lasttest: [docs/LOKAL.md](docs/LOKAL.md)).
 
 ```bash
-pnpm install
-
-# Altsystem
-docker compose --profile legacy up -d mysql-legacy mailpit
-DATABASE_URL=mysql://klangwerk:klangwerk@127.0.0.1:3307/klangwerk pnpm db:migrate -- --bis 001
-DATABASE_URL=mysql://klangwerk:klangwerk@127.0.0.1:3307/klangwerk pnpm db:seed
-docker compose --profile legacy up -d --build legacy          # http://localhost:3001  (Admin: admin/admin)
-
-# Zielsystem, lokal emuliert (MySQL, Redis, Azurite statt Azure Storage, Mailpit statt ACS)
-docker compose --profile ziel up -d
-QUELLE_URL=mysql://klangwerk:klangwerk@127.0.0.1:3307/klangwerk \
-ZIEL_URL=mysql://klangwerk:klangwerk@127.0.0.1:3308/klangwerk ./scripts/migrieren.sh
-cp .env.ziel.example .env && set -a && . ./.env && set +a
-pnpm dev:functions &                                             # http://localhost:7071
-pnpm dev:shop                                                    # http://localhost:3000
-
-# Mails ansehen: http://localhost:8025
+docker compose up -d --build
+# Zielsystem  http://localhost:3000   (Admin: lokaler Entra-Login)
+# Altsystem   http://localhost:3001   (Admin: admin / admin)
+# Mails       http://localhost:8025
 ```
+
+Für die Entwicklung ohne Container: `pnpm install`, dann `pnpm dev:functions` und `pnpm dev:shop` mit den
+Variablen aus `.env.ziel.example` gegen die Datenbanken und Redis aus dem Stack (Redis-URL dann
+`redis://:lokal-redis@127.0.0.1:6380`).
 
 ## Tests
 

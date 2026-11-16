@@ -38,7 +38,7 @@ meldet „wird parallel verarbeitet“ bzw. „schon versendet“.
 5. **Idempotenz, 1 min**: `curl` auf den Test-Endpunkt, Antwort `tickets: 1`.
 6. **Lasttest, 30 s**: Ergebnis des Laufs gegen Azure (vorher aufgezeichnet) mit `✔`.
 
-Rückfallebene: Screenshots in `docs/screens/` bzw. aufgezeichnetes Video.
+Rückfallebene: Screenshots in `docs/screens/` bzw. aufgezeichnetes Video. Lokal lässt sich alles mit `docker compose up -d` proben (siehe `docs/LOKAL.md`).
 
 ## Antworten auf die typischen Fragen
 
