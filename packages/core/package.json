@@ -1,0 +1,37 @@
+{
+  "name": "@kw/core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./kauf": "./src/kauf.ts",
+    "./pdf": "./src/pdf.ts",
+    "./mail": "./src/mail.ts",
+    "./storage": "./src/storage.ts",
+    "./verarbeiten": "./src/verarbeiten.ts",
+    "./format": "./src/format.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@azure/communication-email": "1.1.0",
+    "@azure/identity": "4.14.1",
+    "@azure/storage-blob": "12.34.0",
+    "@azure/storage-queue": "12.32.0",
+    "@kw/db": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "ioredis": "5.11.1",
+    "mysql2": "3.24.6",
+    "nodemailer": "^7.0.0",
+    "pdf-lib": "1.17.1",
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^7.0.0",
+    "@types/qrcode": "^1.5.5",
+    "vitest": "^3.2.0"
+  }
+}

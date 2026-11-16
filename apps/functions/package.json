@@ -1,0 +1,24 @@
+{
+  "name": "@kw/functions",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/azure.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "tsx watch src/dev.ts",
+    "start:dev": "tsx src/dev.ts",
+    "idempotenz": "tsx src/idempotenz.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@azure/functions": "4.17.1",
+    "@kw/core": "workspace:*",
+    "@kw/db": "workspace:*",
+    "mysql2": "3.24.6"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15"
+  }
+}

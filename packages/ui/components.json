@@ -1,0 +1,20 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "base-nova",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/styles/globals.css",
+    "baseColor": "stone",
+    "cssVariables": true
+  },
+  "iconLibrary": "lucide",
+  "aliases": {
+    "components": "@kw/ui/components",
+    "utils": "@kw/ui/lib/utils",
+    "hooks": "@kw/ui/hooks",
+    "lib": "@kw/ui/lib",
+    "ui": "@kw/ui/components"
+  }
+}

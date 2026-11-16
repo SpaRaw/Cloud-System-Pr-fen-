@@ -1,0 +1,66 @@
+# Lokale Umgebung.
+#   Altsystem:            docker compose --profile legacy up -d --build
+#   Zielsystem emuliert:  docker compose --profile ziel up -d   (MySQL, Redis, Azurite, Mailpit)
+services:
+  mysql-legacy:
+    image: mysql:8.4
+    profiles: [legacy]
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: klangwerk
+      MYSQL_USER: klangwerk
+      MYSQL_PASSWORD: klangwerk
+    ports: ["3307:3306"]
+    volumes: [legacy-db:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 3s
+      retries: 30
+
+  legacy:
+    build: { context: ., dockerfile: apps/legacy/Dockerfile }
+    profiles: [legacy]
+    depends_on:
+      mysql-legacy: { condition: service_healthy }
+    environment:
+      DATABASE_URL: mysql://klangwerk:klangwerk@mysql-legacy:3306/klangwerk
+      SMTP_URL: smtp://mailpit:1025
+      LEGACY_DATEN_DIR: /data
+      ADMIN_BASIC_AUTH: admin:admin
+      LEGACY_VERZOEGERUNG_MS: "250"
+    ports: ["3001:3001"]
+    volumes: [legacy-dateien:/data]   # PDFs und Bilder liegen auf derselben "Platte"
+
+  mysql-ziel:
+    image: mysql:8.4
+    profiles: [ziel]
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: klangwerk
+      MYSQL_USER: klangwerk
+      MYSQL_PASSWORD: klangwerk
+    ports: ["3308:3306"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    profiles: [ziel]
+    ports: ["6380:6379"]
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    profiles: [ziel]
+    command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck --loose
+    ports: ["10000:10000", "10001:10001", "10002:10002"]
+
+  mailpit:
+    image: axllent/mailpit
+    profiles: [legacy, ziel]
+    ports: ["8025:8025", "1025:1025"]
+
+volumes:
+  legacy-db:
+  legacy-dateien:

@@ -1,0 +1,19 @@
+{
+  "name": "klangwerk",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev:legacy": "pnpm --filter @kw/legacy dev",
+    "dev:shop": "pnpm --filter @kw/shop dev",
+    "dev:functions": "pnpm --filter @kw/functions dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter @kw/db migrate",
+    "db:seed": "pnpm --filter @kw/db seed"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "^22.10.0"
+  }
+}
