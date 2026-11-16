@@ -1,0 +1,14 @@
+node_modules/
+.next/
+dist/
+out/
+.env
+.env.local
+*.log
+coverage/
+apps/functions/local.settings.json
+legacy-data/
+.turbo/
+next-env.d.ts
+dump.rdb
+zz-ca.crt

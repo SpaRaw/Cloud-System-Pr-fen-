@@ -1,0 +1,24 @@
+{
+  "name": "@kw/db",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "migrate": "tsx scripts/migrate.ts",
+    "seed": "tsx scripts/seed.ts",
+    "zaehlen": "tsx scripts/zaehlen.ts",
+    "lasttest-event": "tsx scripts/lasttest-event.ts",
+    "pruefen": "tsx scripts/pruefen.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.4",
+    "mysql2": "3.24.6"
+  },
+  "devDependencies": {
+    "tsx": "4.23.15"
+  }
+}
