@@ -1,0 +1,11 @@
+#cloud-config
+# Altsystem-VM: Ubuntu 24.04 mit Docker und Compose-Plugin. Das Repo wird danach per scp kopiert.
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+runcmd:
+  - systemctl enable --now docker
+  - usermod -aG docker azureuser
+  - mkdir -p /opt/klangwerk && chown azureuser:azureuser /opt/klangwerk
