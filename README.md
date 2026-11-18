@@ -5,6 +5,7 @@ Prüfungsleistung Cloud Computing, Fall A. Monorepo mit Altsystem (Ist-Zustand) 
 - Architektur und alle Entscheidungen: [docs/ARCHITEKTUR.md](docs/ARCHITEKTUR.md)
 - Pflicht-Nachweise, lokale Ergebnisse, Demo-Ablauf, Antworten auf Prüfungsfragen: [docs/DEMO.md](docs/DEMO.md)
 - Deployment auf Azure (Altsystem-VM + Zielsystem): [infra/SETUP.md](infra/SETUP.md)
+- Deployment über das Azure-Portal (Ressourcengruppe vorhanden): [infra/PORTAL.md](infra/PORTAL.md)
 
 ```
 apps/legacy      Altsystem: Next.js-Monolith, Kauf synchron und ohne Sperre        :3001
