@@ -170,6 +170,12 @@ Im Speicherkonto:
 
 ---
 
+> **Schritte 6–10 per Skript:** Klappt das Anlegen im Portal nicht, `infra/cloudshell-ab-schritt6.sh` in
+> die Cloud Shell hochladen und `bash cloudshell-ab-schritt6.sh` starten. Es findet Registry, MySQL,
+> Storage und ACS aus den Schritten 2–5 selbst, legt Umgebung, Redis, Functions, Shop und Easy Auth an und
+> weicht bei Fehlern auf die anderen erlaubten Regionen aus (Germany West Central, Italy North, Austria East).
+> Die Werte (URLs, Kennwörter) stehen danach in `~/klangwerk-werte.env`.
+
 ## 6. Container-Apps-Umgebung (mit eigenem VNet)
 
 Eigenes VNet ist nötig, weil Redis per TCP angesprochen wird.
