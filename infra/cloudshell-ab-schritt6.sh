@@ -48,8 +48,8 @@ merke()   { # Wert in ~/klangwerk-werte.env speichern (überschreibt alten Eintr
 # shellcheck disable=SC1090
 [[ -f $WERTE ]] && source "$WERTE"
 
-# Für YAML: Werte stehen in "…", dürfen also kein " oder \ enthalten
-yamlsicher() { [[ $1 != *'"'* && $1 != *'\'* ]] || fail "Wert enthält \" oder \\ und passt nicht ins YAML: ${1:0:12}…"; }
+# Für JSON: Werte stehen in "…", dürfen also kein " oder \ enthalten
+jsonsicher() { [[ $1 != *'"'* && $1 != *'\'* ]] || fail "Wert enthält \" oder \\ und passt nicht ins JSON: ${1:0:12}…"; }
 
 # Status einer Container App: leer = gibt es nicht
 ca_status() { az containerapp show -g "$RG" -n "$1" --query properties.provisioningState -o tsv 2>/dev/null || true; }
@@ -71,6 +71,7 @@ if [[ -z ${RG:-} ]]; then
   else read -rp "Name der Ressourcengruppe: " RG; fi
 fi
 az group show -n "$RG" -o none || fail "Ressourcengruppe $RG nicht gefunden"
+RG_ID=$(az group show -n "$RG" --query id -o tsv)
 ok "Ressourcengruppe: $RG"
 
 # Regionsreihenfolge: REGION, sonst Region der Gruppe, dann die übrigen erlaubten
@@ -206,49 +207,50 @@ fi
 [[ -n $REDIS_PW ]] || REDIS_PW=$(openssl rand -hex 16)
 merke REDIS_PW "$REDIS_PW"
 
-cat > "$TMP/redis.yaml" <<EOF
-location: $REGION
-properties:
-  environmentId: $ENV_ID
-  workloadProfileName: Consumption
-  configuration:
-    activeRevisionsMode: Single
-    secrets:
-      - name: redis-password
-        value: "$REDIS_PW"
-    ingress:
-      external: false
-      transport: tcp
-      targetPort: 6379
-      exposedPort: 6379
-  template:
-    containers:
-      - name: redis
-        image: docker.io/library/redis:7-alpine
-        command: ["/bin/sh", "-c"]
-        args: ['exec redis-server --requirepass "\$REDIS_PASSWORD" --save "" --appendonly no --maxmemory 400mb']
-        env:
-          - name: REDIS_PASSWORD
-            secretRef: redis-password
-        resources:
-          cpu: 0.25
-          memory: 0.5Gi
-    scale:
-      minReplicas: 1
-      maxReplicas: 1
+cat > "$TMP/redis.json" <<EOF
+{
+  "location": "$REGION",
+  "properties": {
+    "environmentId": "$ENV_ID",
+    "workloadProfileName": "Consumption",
+    "configuration": {
+      "activeRevisionsMode": "Single",
+      "secrets": [ { "name": "redis-password", "value": "$REDIS_PW" } ],
+      "ingress": { "external": false, "transport": "tcp", "targetPort": 6379, "exposedPort": 6379 }
+    },
+    "template": {
+      "containers": [ {
+        "name": "redis",
+        "image": "docker.io/library/redis:7-alpine",
+        "command": ["/bin/sh", "-c", "exec redis-server --requirepass \"\$REDIS_PASSWORD\" --save \"\" --appendonly no --maxmemory 400mb"],
+        "env": [ { "name": "REDIS_PASSWORD", "secretRef": "redis-password" } ],
+        "resources": { "cpu": 0.25, "memory": "0.5Gi" }
+      } ],
+      "scale": { "minReplicas": 1, "maxReplicas": 1 }
+    }
+  }
+}
 EOF
 
-ca_anlegen() { # $1 = Name, $2 = YAML-Datei
+ca_anlegen() { # $1 = Name, $2 = JSON-Datei (ARM-Format, wie in main.bicep)
   local s; s=$(ca_status "$1")
   if [[ -n $s && $s != Succeeded ]]; then
     warn "$1 hat Status $s, lösche und lege neu an"
     az containerapp delete -g "$RG" -n "$1" -y -o none
-    s=""
   fi
-  if [[ -z $s ]]; then az containerapp create -g "$RG" -n "$1" --yaml "$2" -o none
-  else                 az containerapp update -g "$RG" -n "$1" --yaml "$2" -o none; fi
+  python3 -m json.tool "$2" >/dev/null || fail "interner Fehler: $2 ist kein gültiges JSON"
+  echo "Lege $1 an bzw. aktualisiere (1–3 min) …"
+  az rest --method put --url "https://management.azure.com$RG_ID/providers/Microsoft.App/containerApps/$1?api-version=2024-03-01" \
+     --body @"$2" -o none
+  for _ in $(seq 1 60); do
+    s=$(ca_status "$1")
+    [[ $s == Succeeded ]] && return 0
+    [[ $s == Failed ]] && fail "$1 ist fehlgeschlagen. Details: az containerapp show -g $RG -n $1 / Portal → Protokolle"
+    sleep 10
+  done
+  fail "$1 ist nach 10 min noch nicht fertig (Status $s)"
 }
-ca_anlegen $REDIS_APP "$TMP/redis.yaml"
+ca_anlegen $REDIS_APP "$TMP/redis.json"
 REDIS_URL="redis://:$REDIS_PW@$REDIS_APP:6379"
 ok "Redis läuft intern unter $REDIS_APP:6379"
 
@@ -294,50 +296,50 @@ if [[ $FUNC_MODUS == functionapp ]]; then
   FUNC_HOST=$(az functionapp show -g "$RG" -n "$FUNC_NAME" --query defaultHostName -o tsv)
 else
   FUNC_NAME=func-klangwerk
-  for v in "$ST_CS" "$DB_URL" "$ACS_CS" "$ACR_PW"; do yamlsicher "$v"; done
-  cat > "$TMP/func.yaml" <<EOF
-location: $REGION
-properties:
-  environmentId: $ENV_ID
-  workloadProfileName: Consumption
-  configuration:
-    activeRevisionsMode: Single
-    registries:
-      - server: $ACR_SERVER
-        username: $ACR_USER
-        passwordSecretRef: acr-password
-    secrets:
-      - { name: acr-password, value: "$ACR_PW" }
-      - { name: storage, value: "$ST_CS" }
-      - { name: database-url, value: "$DB_URL" }
-      - { name: redis-url, value: "$REDIS_URL" }
-      - { name: acs, value: "$ACS_CS" }
-    ingress:
-      external: true
-      targetPort: 80
-      transport: auto
-  template:
-    containers:
-      - name: functions
-        image: $ACR_SERVER/kw-functions:$IMAGE_TAG
-        resources: { cpu: 0.5, memory: 1Gi }
-        env:
-          - { name: AzureWebJobsStorage, secretRef: storage }
-          - { name: BestellQueue, secretRef: storage }
-          - { name: STORAGE_CONNECTION_STRING, secretRef: storage }
-          - { name: DATABASE_URL, secretRef: database-url }
-          - { name: REDIS_URL, secretRef: redis-url }
-          - { name: ACS_CONNECTION_STRING, secretRef: acs }
-          - { name: MAIL_ABSENDER, value: "$MAIL_ABSENDER" }
-          - { name: RATE_LIMIT_IP, value: "${RATE_LIMIT_IP:-300}" }
-          - { name: NODE_ENV, value: production }
-          - { name: FUNCTIONS_WORKER_RUNTIME, value: node }
-          - { name: FUNCTIONS_EXTENSION_VERSION, value: "~4" }
-    scale:
-      minReplicas: 1
-      maxReplicas: 10
+  for v in "$ST_CS" "$DB_URL" "$ACS_CS" "$ACR_PW"; do jsonsicher "$v"; done
+  cat > "$TMP/func.json" <<EOF
+{
+  "location": "$REGION",
+  "properties": {
+    "environmentId": "$ENV_ID",
+    "workloadProfileName": "Consumption",
+    "configuration": {
+      "activeRevisionsMode": "Single",
+      "registries": [ { "server": "$ACR_SERVER", "username": "$ACR_USER", "passwordSecretRef": "acr-password" } ],
+      "secrets": [
+        { "name": "acr-password", "value": "$ACR_PW" },
+        { "name": "storage", "value": "$ST_CS" },
+        { "name": "database-url", "value": "$DB_URL" },
+        { "name": "redis-url", "value": "$REDIS_URL" },
+        { "name": "acs", "value": "${ACS_CS:-leer}" }
+      ],
+      "ingress": { "external": true, "targetPort": 80, "transport": "auto" }
+    },
+    "template": {
+      "containers": [ {
+        "name": "functions",
+        "image": "$ACR_SERVER/kw-functions:$IMAGE_TAG",
+        "resources": { "cpu": 0.5, "memory": "1Gi" },
+        "env": [
+          { "name": "AzureWebJobsStorage", "secretRef": "storage" },
+          { "name": "BestellQueue", "secretRef": "storage" },
+          { "name": "STORAGE_CONNECTION_STRING", "secretRef": "storage" },
+          { "name": "DATABASE_URL", "secretRef": "database-url" },
+          { "name": "REDIS_URL", "secretRef": "redis-url" },
+          { "name": "ACS_CONNECTION_STRING", "secretRef": "acs" },
+          { "name": "MAIL_ABSENDER", "value": "$MAIL_ABSENDER" },
+          { "name": "RATE_LIMIT_IP", "value": "${RATE_LIMIT_IP:-300}" },
+          { "name": "NODE_ENV", "value": "production" },
+          { "name": "FUNCTIONS_WORKER_RUNTIME", "value": "node" },
+          { "name": "FUNCTIONS_EXTENSION_VERSION", "value": "~4" }
+        ]
+      } ],
+      "scale": { "minReplicas": 1, "maxReplicas": 10 }
+    }
+  }
+}
 EOF
-  ca_anlegen $FUNC_NAME "$TMP/func.yaml"
+  ca_anlegen $FUNC_NAME "$TMP/func.json"
   FUNC_HOST=$(az containerapp show -g "$RG" -n $FUNC_NAME --query properties.configuration.ingress.fqdn -o tsv)
 fi
 FUNCTIONS_URL="https://$FUNC_HOST"
@@ -353,55 +355,50 @@ curl -fsS -m 10 "$FUNCTIONS_URL/api/kauf/verfuegbar?ids=" >/dev/null 2>&1 \
 
 # ================================================================ 9. Shop
 schritt "9. Shop als Container App"
-for v in "$ST_CS" "$DB_URL" "$ACR_PW" "${ADMIN_EMAILS:-}"; do yamlsicher "$v"; done
-cat > "$TMP/shop.yaml" <<EOF
-location: $REGION
-properties:
-  environmentId: $ENV_ID
-  workloadProfileName: Consumption
-  configuration:
-    activeRevisionsMode: Multiple
-    registries:
-      - server: $ACR_SERVER
-        username: $ACR_USER
-        passwordSecretRef: acr-password
-    secrets:
-      - { name: acr-password, value: "$ACR_PW" }
-      - { name: database-url, value: "$DB_URL" }
-      - { name: redis-url, value: "$REDIS_URL" }
-      - { name: storage, value: "$ST_CS" }
-    ingress:
-      external: true
-      targetPort: 3000
-      transport: auto
-      traffic:
-        - latestRevision: true
-          weight: 100
-  template:
-    containers:
-      - name: shop
-        image: $ACR_SERVER/kw-shop:$IMAGE_TAG
-        resources: { cpu: 0.5, memory: 1Gi }
-        env:
-          - { name: DATABASE_URL, secretRef: database-url }
-          - { name: REDIS_URL, secretRef: redis-url }
-          - { name: STORAGE_CONNECTION_STRING, secretRef: storage }
-          - { name: FUNCTIONS_URL, value: "$FUNCTIONS_URL" }
-          - { name: ADMIN_EMAILS, value: "${ADMIN_EMAILS:-}" }
-        probes:
-          - type: Readiness
-            httpGet: { path: /shop, port: 3000 }
-            periodSeconds: 10
-    scale:
-      minReplicas: 0
-      maxReplicas: 10
-      rules:
-        - name: http
-          http:
-            metadata:
-              concurrentRequests: "50"
+for v in "$ST_CS" "$DB_URL" "$ACR_PW" "${ADMIN_EMAILS:-}"; do jsonsicher "$v"; done
+cat > "$TMP/shop.json" <<EOF
+{
+  "location": "$REGION",
+  "properties": {
+    "environmentId": "$ENV_ID",
+    "workloadProfileName": "Consumption",
+    "configuration": {
+      "activeRevisionsMode": "Multiple",
+      "registries": [ { "server": "$ACR_SERVER", "username": "$ACR_USER", "passwordSecretRef": "acr-password" } ],
+      "secrets": [
+        { "name": "acr-password", "value": "$ACR_PW" },
+        { "name": "database-url", "value": "$DB_URL" },
+        { "name": "redis-url", "value": "$REDIS_URL" },
+        { "name": "storage", "value": "$ST_CS" }
+      ],
+      "ingress": {
+        "external": true, "targetPort": 3000, "transport": "auto",
+        "traffic": [ { "latestRevision": true, "weight": 100 } ]
+      }
+    },
+    "template": {
+      "containers": [ {
+        "name": "shop",
+        "image": "$ACR_SERVER/kw-shop:$IMAGE_TAG",
+        "resources": { "cpu": 0.5, "memory": "1Gi" },
+        "env": [
+          { "name": "DATABASE_URL", "secretRef": "database-url" },
+          { "name": "REDIS_URL", "secretRef": "redis-url" },
+          { "name": "STORAGE_CONNECTION_STRING", "secretRef": "storage" },
+          { "name": "FUNCTIONS_URL", "value": "$FUNCTIONS_URL" },
+          { "name": "ADMIN_EMAILS", "value": "${ADMIN_EMAILS:-}" }
+        ],
+        "probes": [ { "type": "Readiness", "httpGet": { "path": "/shop", "port": 3000 }, "periodSeconds": 10 } ]
+      } ],
+      "scale": {
+        "minReplicas": 0, "maxReplicas": 10,
+        "rules": [ { "name": "http", "http": { "metadata": { "concurrentRequests": "50" } } } ]
+      }
+    }
+  }
+}
 EOF
-ca_anlegen $SHOP_APP "$TMP/shop.yaml"
+ca_anlegen $SHOP_APP "$TMP/shop.json"
 SHOP_FQDN=$(az containerapp show -g "$RG" -n $SHOP_APP --query properties.configuration.ingress.fqdn -o tsv)
 SHOP_URL="https://$SHOP_FQDN"
 merke SHOP_URL "$SHOP_URL"
