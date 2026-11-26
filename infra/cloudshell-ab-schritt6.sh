@@ -113,9 +113,13 @@ for c in tickets bilder; do az storage container create -n $c --connection-strin
 ok "Storage $ST (Queue bestellungen, Container tickets/bilder)"
 
 # --- MySQL (Schritt 3)
-read -r MYSQL_SERVER MYSQL_HOST MYSQL_USER MYSQL_STATE < <(az mysql flexible-server list -g "$RG" \
-  --query "[0].[name, fullyQualifiedDomainName, administratorLogin, state]" -o tsv)
+# Jeder Wert einzeln abfragen: leere Felder würden bei "read" sonst die Reihenfolge verschieben
+MYSQL_SERVER=$(az mysql flexible-server list -g "$RG" --query "[0].name" -o tsv)
 [[ -n ${MYSQL_SERVER:-} ]] || fail "Kein MySQL Flexible Server in $RG (Schritt 3 fehlt)"
+mysql_feld() { az mysql flexible-server show -g "$RG" -n "$MYSQL_SERVER" --query "$1" -o tsv 2>/dev/null || true; }
+MYSQL_HOST=$(mysql_feld fullyQualifiedDomainName); [[ -n $MYSQL_HOST ]] || MYSQL_HOST="$MYSQL_SERVER.mysql.database.azure.com"
+MYSQL_USER=$(mysql_feld administratorLogin);       [[ -n $MYSQL_USER ]] || MYSQL_USER=${MYSQL_ADMIN:-kwadmin}
+MYSQL_STATE=$(mysql_feld state)
 if [[ $MYSQL_STATE == Stopped ]]; then echo "MySQL ist gestoppt, starte …"; az mysql flexible-server start -g "$RG" -n "$MYSQL_SERVER" -o none; fi
 az mysql flexible-server db show -g "$RG" -s "$MYSQL_SERVER" -d klangwerk -o none 2>/dev/null \
   || az mysql flexible-server db create -g "$RG" -s "$MYSQL_SERVER" -d klangwerk --charset utf8mb4 --collation utf8mb4_0900_ai_ci -o none
