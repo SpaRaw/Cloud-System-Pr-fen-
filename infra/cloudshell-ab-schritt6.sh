@@ -117,7 +117,7 @@ read -r MYSQL_SERVER MYSQL_HOST MYSQL_USER MYSQL_STATE < <(az mysql flexible-ser
 [[ -n ${MYSQL_SERVER:-} ]] || fail "Kein MySQL Flexible Server in $RG (Schritt 3 fehlt)"
 if [[ $MYSQL_STATE == Stopped ]]; then echo "MySQL ist gestoppt, starte …"; az mysql flexible-server start -g "$RG" -n "$MYSQL_SERVER" -o none; fi
 az mysql flexible-server db show -g "$RG" -s "$MYSQL_SERVER" -d klangwerk -o none 2>/dev/null \
-  || az mysql flexible-server db create -g "$RG" -s "$MYSQL_SERVER" -d klangwerk --charset utf8mb4 -o none
+  || az mysql flexible-server db create -g "$RG" -s "$MYSQL_SERVER" -d klangwerk --charset utf8mb4 --collation utf8mb4_0900_ai_ci -o none
 az mysql flexible-server firewall-rule show -g "$RG" -n "$MYSQL_SERVER" --rule-name AllowAzureServices -o none 2>/dev/null \
   || az mysql flexible-server firewall-rule create -g "$RG" -n "$MYSQL_SERVER" --rule-name AllowAzureServices \
        --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0 -o none
